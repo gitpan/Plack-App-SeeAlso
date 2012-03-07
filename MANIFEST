@@ -1,0 +1,12 @@
+LICENSE
+MANIFEST
+META.yml
+Makefile.PL
+README
+example.xml
+lib/Plack/App/SeeAlso.pm
+share/seealso.css
+share/seealso.js
+share/seealso.xsl
+t/author-critic.t
+t/basic.t
