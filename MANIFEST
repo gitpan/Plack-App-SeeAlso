@@ -1,3 +1,4 @@
+Changes
 LICENSE
 MANIFEST
 META.yml
@@ -8,5 +9,7 @@ lib/Plack/App/SeeAlso.pm
 share/seealso.css
 share/seealso.js
 share/seealso.xsl
-t/author-critic.t
 t/basic.t
+t/options.t
+t/osd1.xml
+t/unapi1.xml
