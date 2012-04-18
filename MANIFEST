@@ -13,3 +13,4 @@ t/basic.t
 t/options.t
 t/osd1.xml
 t/unapi1.xml
+t/valid.t

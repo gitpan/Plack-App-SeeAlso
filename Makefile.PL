@@ -15,6 +15,7 @@ my %WriteMakefileArgs = (
   "AUTHOR" => "Jakob Voss",
   "BUILD_REQUIRES" => {
     "HTTP::Request::Common" => 0,
+    "Plack::Builder" => 0,
     "Plack::Test" => 0,
     "Test::More" => 0
   },
@@ -28,11 +29,12 @@ my %WriteMakefileArgs = (
   "NAME" => "Plack::App::SeeAlso",
   "PREREQ_PM" => {
     "Carp" => 0,
+    "Data::Dumper" => 0,
     "Encode" => 0,
     "Exporter" => 0,
     "File::ShareDir" => 0,
     "JSON" => 0,
-    "Plack::App::unAPI" => 0,
+    "Plack::App::unAPI" => "0.3",
     "Plack::Component" => 0,
     "Plack::MIME" => 0,
     "Plack::Middleware::JSONP" => 0,
@@ -41,12 +43,13 @@ my %WriteMakefileArgs = (
     "Plack::Util" => 0,
     "Plack::Util::Accessor" => 0,
     "Scalar::Util" => 0,
+    "Try::Tiny" => 0,
     "feature" => 0,
     "parent" => 0,
     "strict" => 0,
     "warnings" => 0
   },
-  "VERSION" => "0.10",
+  "VERSION" => "0.11",
   "test" => {
     "TESTS" => "t/*.t"
   }

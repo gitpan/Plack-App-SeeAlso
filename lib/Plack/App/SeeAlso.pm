@@ -2,7 +2,7 @@ use strict;
 use warnings;
 package Plack::App::SeeAlso;
 {
-  $Plack::App::SeeAlso::VERSION = '0.10';
+  $Plack::App::SeeAlso::VERSION = '0.11';
 }
 #ABSTRACT: SeeAlso Server as PSGI application
 
@@ -11,11 +11,13 @@ use feature ':5.10';
 use Plack::Request;
 use Plack::Middleware::JSONP;
 use Plack::Middleware::Static;
-use Plack::App::unAPI '0.3';
+use Plack::App::unAPI qw(0.3);
 use File::ShareDir qw(dist_dir);
 use Plack::Util;
 use Carp qw(croak);
-use Scalar::Util qw(blessed);
+use Scalar::Util qw(blessed reftype);
+use Try::Tiny;
+use Data::Dumper;
 use JSON;
 use Encode;
 
@@ -23,6 +25,7 @@ use parent 'Plack::Component';
 use parent 'Exporter';
 
 our @EXPORT = qw(push_seealso);
+our @EXPORT_OK = qw(valid_seealso);
 
 # properties of the server form OpenSearch Description
 our @PROPERTIES; BEGIN { @PROPERTIES = qw(Query Stylesheet Formats Examples
@@ -70,10 +73,17 @@ sub prepare_app {
             ],
             seealso => [
                 sub {
-                    my $id = Plack::Request->new(shift)->param('id');
-                    my $res = $self->query( $id ) || [$id,[]];
-                    # TODO: validate?
-                    my $json = JSON->new->encode( $res );
+                    my $env = shift;
+                    my $id = Plack::Request->new($env)->param('id');
+                    my $res;
+                    try {
+                        $res = $self->query( $id );
+                        die 'Invalid SeeAlso response:' . Dumper($res)
+                            if defined $res and !valid_seealso($res);
+                    } catch {
+                        $env->{'psgi.errors'}->print($_);
+                    };
+                    my $json = JSON->new->encode( $res || [$id,[],[],[]] );
                     return [ 200, [ "Content-Type" => 'text/javascript' ], [ $json ] ];
                 } => 'text/javascript' ],
 
@@ -159,11 +169,23 @@ sub openSearchDescription {
 }
 
 sub push_seealso ($$$$) {
-    shift if blessed($_[0]);
     my $resp = shift;
     push @{$resp->[1]}, (shift // '');
     push @{$resp->[2]}, (shift // '');
     push @{$resp->[3]}, (shift // '');
+    $resp;
+}
+
+sub valid_seealso ($) {
+    my $resp = shift;
+    return unless (reftype($resp) || '') eq 'ARRAY' and @$resp == 4;
+    return if ref($resp->[0] // []); # identifier must be string
+    return unless (reftype($resp) || '') eq 'ARRAY';
+    foreach (1,2,3) {
+        my $a = $resp->[$_];
+        return unless (reftype($a) || '') eq 'ARRAY';
+        return if grep { ref($_ // []) } @$a; 
+    }
     $resp;
 }
 
@@ -191,7 +213,7 @@ Plack::App::SeeAlso - SeeAlso Server as PSGI application
 
 =head1 VERSION
 
-version 0.10
+version 0.11
 
 =head1 SYNOPSIS
 
@@ -221,29 +243,38 @@ version 0.10
 
     sub query {
         my ($self, $id) = @_;
-        # ...
+        my $response = ...; # your code
+        return $response;
     }
 
 =head1 DESCRIPTION
 
-This module implements the a SeeAlso Linkserver Protocol server as PSGI
-application. SeeAlso is basically based on two HTTP protocols, 
-L<unAPI|http://unapi.info> and L<OpenSearch|http://opensearch.org> 
-(Open Search Suggestions and Open Search Description documents).
+This module implements a I<SeeAlso Linkserver Protocol> server as PSGI
+application. SeeAlso is basically based on two HTTP protocols,
+L<unAPI|http://unapi.info> and L<OpenSearch|http://opensearch.org> (in detail
+I<Open Search Suggestions> for the response format and I<Open Search
+Description Documents> for the service description).
 
-You can simply implement a SeeAlso server by creating an instance of 
-Plack::App::SeeAlso or by deriving this class and implementing
+You can simply implement a SeeAlso server by creating an instance of
+Plack::App::SeeAlso or by deriving from this class and implementing the
+C<query> method. Errors in the query method (including invalid SeeAlso
+responses) are catched and printed to the error stream, so on failure an 
+empty SeeAlso response is returned.
 
-This module contains a SeeAlso client in form of three files (seealso.js,
-seealso.xsl, seealso.css). This client is served if no format-parameter
-was given, so you get a nice, human readable interface.
+This module contains a SeeAlso client in form of three files (C<seealso.js>,
+C<seealso.xsl>, and C<seealso.css>). The client is served if no
+format-parameter was given, so you automatically get a nice, human readable
+interface for your SeeAlso server.
 
 =head1 METHODS
 
 =head2 new ( [ %properties ] )
 
 Creates a new SeeAlso server. The following optional properties are supported,
-most of them to be used as OpenSearch description elements:
+most of them to be used as OpenSearch description elements. Default values are
+taken from package variables of same name, so instead of passing properties to
+the constructor you can also set for instance C<$Plack::App::SeeAlso::Contact>
+or say C<our $Contact = "..."> in your subclass of Plack::App::SeeAlso.
 
 =over 4
 
@@ -267,7 +298,7 @@ Verbal description of the server (truncated to 1024 characters).
 
 An email address at which the maintainer of the server can be reached.
 
-=item C<Developer>
+=item B<Developer>
 
 Human-readable name or identifier of the creator or maintainer of the server.
 
@@ -284,12 +315,12 @@ contained in the search feed (truncated to 256 characters).
 
 =item B<Source>
 
-Verbal description of the source of the server (Dublin Core element dc:source).
+Verbal description of the source of the server (Dublin Core element I<Source>).
 
 =item B<DateModified>
 
 Timestamp of last modification of the server (qualified Dublin Core element
-Date.Modified).
+I<Date.Modified>).
 
 =item B<Examples>
 
@@ -317,7 +348,7 @@ A hash reference with additional formats, to be used with L<Plack::App::unAPI>.
 
 The OpenSearch description element B<Url> is set automatically. The elements
 B<SyndicationRight>, B<AdultContent>, B<Language>, B<InputEncoding>, and
-B<OutputEncoding> are not supported.
+B<OutputEncoding> are not supported yet.
 
 =head2 query ( $identifier )
 
@@ -347,9 +378,18 @@ The fourth element is an arary reference with C<URIs> as strings.
 
 =back
 
+=head1 FUNCTIONS
+
+=head2 valid_seealso ( $response )
+
+This utility function is exported on request. It can be used to validate
+a SeeAlso response, which must be an reference to an array of four elements
+(identifier, labels, descriptions, URIs), as described above. On success the
+function returns the response, otherwise C<undef>.
+
 =head2 push_seealso ( $response, $label, $description, $uri )
 
-This utility method/function is exported by default. You can use it to append
+This utility function is exported by default. You can use it to append
 a single response item to a response array reference:
 
     $resp = [$id,[],[],[]];
