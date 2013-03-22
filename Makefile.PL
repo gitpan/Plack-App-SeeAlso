@@ -34,7 +34,7 @@ my %WriteMakefileArgs = (
     "Exporter" => 0,
     "File::ShareDir" => 0,
     "JSON" => 0,
-    "Plack::App::unAPI" => "0.3",
+    "Plack::App::unAPI" => "0.32",
     "Plack::Component" => 0,
     "Plack::MIME" => 0,
     "Plack::Middleware::JSONP" => 0,
@@ -49,7 +49,7 @@ my %WriteMakefileArgs = (
     "strict" => 0,
     "warnings" => 0
   },
-  "VERSION" => "0.11",
+  "VERSION" => "0.12",
   "test" => {
     "TESTS" => "t/*.t"
   }

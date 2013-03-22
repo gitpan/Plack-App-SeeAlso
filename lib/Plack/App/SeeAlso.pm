@@ -2,7 +2,7 @@ use strict;
 use warnings;
 package Plack::App::SeeAlso;
 {
-  $Plack::App::SeeAlso::VERSION = '0.11';
+  $Plack::App::SeeAlso::VERSION = '0.12';
 }
 #ABSTRACT: SeeAlso Server as PSGI application
 
@@ -32,7 +32,7 @@ our @PROPERTIES; BEGIN { @PROPERTIES = qw(Query Stylesheet Formats Examples
     ShortName LongName Attribution Tags Contact Description Source 
     DateModified Developer); }
 
-use Plack::Util::Accessor @PROPERTIES;
+use Plack::Util::Accessor (@PROPERTIES, 'base');
 
 # browsers will more likely complain otherwise
 use Plack::MIME;
@@ -118,7 +118,7 @@ sub call {
     Plack::Util::response_cb( $result, sub {
         my $res = shift;
         return unless $res->[0] == 300;
-        my $base = Plack::Request->new($env)->base; 
+        my $base = $self->base || Plack::Request->new($env)->base;
         my $xsl = $self->{Stylesheet};
         $xsl = '<?xml-stylesheet type="text/xsl" href="'.$xsl.'"?>';
         $xsl .= "\n<?seealso-query-base $base?>\n";
@@ -213,7 +213,7 @@ Plack::App::SeeAlso - SeeAlso Server as PSGI application
 
 =head1 VERSION
 
-version 0.11
+version 0.12
 
 =head1 SYNOPSIS
 
@@ -344,6 +344,12 @@ undef or you set it to some URL of another XSLT file.
 
 A hash reference with additional formats, to be used with L<Plack::App::unAPI>.
 
+=item C<base>
+
+A base URL to be send in the C<seealso-query-base> processing-instruction. Set to
+the HTTP query base by default. One may need to adjust this if the server runs 
+behind a proxy.
+
 =back
 
 The OpenSearch description element B<Url> is set automatically. The elements
@@ -414,7 +420,7 @@ Jakob Voss
 
 =head1 COPYRIGHT AND LICENSE
 
-This software is copyright (c) 2012 by Jakob Voss.
+This software is copyright (c) 2013 by Jakob Voss.
 
 This is free software; you can redistribute it and/or modify it under
 the same terms as the Perl 5 programming language system itself.
