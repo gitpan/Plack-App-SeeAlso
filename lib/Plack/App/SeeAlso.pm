@@ -1,11 +1,8 @@
 use strict;
 use warnings;
 package Plack::App::SeeAlso;
-{
-  $Plack::App::SeeAlso::VERSION = '0.12';
-}
 #ABSTRACT: SeeAlso Server as PSGI application
-
+$Plack::App::SeeAlso::VERSION = '0.14';
 use feature ':5.10';
 
 use Plack::Request;
@@ -17,19 +14,20 @@ use Plack::Util;
 use Carp qw(croak);
 use Scalar::Util qw(blessed reftype);
 use Try::Tiny;
-use Data::Dumper;
 use JSON;
 use Encode;
 
 use parent 'Plack::Component';
 use parent 'Exporter';
 
+use SeeAlso::Format;
+
 our @EXPORT = qw(push_seealso);
 our @EXPORT_OK = qw(valid_seealso);
 
 # properties of the server form OpenSearch Description
 our @PROPERTIES; BEGIN { @PROPERTIES = qw(Query Stylesheet Formats Examples
-    ShortName LongName Attribution Tags Contact Description Source 
+    ShortName LongName Attribution Tags Contact Description Source
     DateModified Developer); }
 
 use Plack::Util::Accessor (@PROPERTIES, 'base');
@@ -42,57 +40,52 @@ sub prepare_app {
     my $self = shift;
     return if $self->{app}; # already initialized
 
-    # get default values from module variables
+    # get default configuration from module variables
     $self->{Stylesheet} = 'seealso.xsl' unless exists $self->{Stylesheet};
     foreach (@PROPERTIES) {
         no strict 'refs';
-        $self->$_( ${ref($self)."::$_"} // '' ) unless exists $self->{$_};
+        unless (exists $self->{$_}) {
+            $self->{$_} = ${ref($self)."::$_"} // '';
+        }
     }
 
+    # validate and normalize configuration
     $self->{ShortName}   = sprintf '%.16s',   $self->{ShortName} // '';
     $self->{LongName}    = sprintf '%.48s',   $self->{LongName} // '' ;
     $self->{Description} = sprintf '%.1024s', $self->{Description} // '';
     $self->{Tags}        = sprintf '%.256s',  $self->{Tags} // '';
     $self->{Attribution} = sprintf '%.256s',  $self->{Attribution} // '';
 
+    my $examples = $self->{Examples};
+    $examples = [] unless ref $examples and reftype $examples eq 'ARRAY';
+    $self->{Examples}    = [ 
+        grep { ref $_ and reftype($_) eq 'HASH' and $_->{id} } @$examples
+    ];
+
     # TODO: validate
     #   Stylesheet
-    #   Formats 
+    #   Formats
     #   Contact
-    #   Source 
-    #   DateModified 
-    #   Examples
+    #   Source
+    #   DateModified
 
     my %formats = %{ $self->{Formats} || { } };
     delete $formats{$_} for (qw(opensearchdescription seealso _));
 
-    my $app = unAPI(
-            opensearchdescription => [
-                sub { $self->openSearchDescription(@_); }
-                => 'application/opensearchdescription+xml', 
-            ],
-            seealso => [
-                sub {
-                    my $env = shift;
-                    my $id = Plack::Request->new($env)->param('id');
-                    my $res;
-                    try {
-                        $res = $self->query( $id );
-                        die 'Invalid SeeAlso response:' . Dumper($res)
-                            if defined $res and !valid_seealso($res);
-                    } catch {
-                        $env->{'psgi.errors'}->print($_);
-                    };
-                    my $json = JSON->new->encode( $res || [$id,[],[],[]] );
-                    return [ 200, [ "Content-Type" => 'text/javascript' ], [ $json ] ];
-                } => 'text/javascript' ],
+    # TODO: extend known formats: csv, redirect
+    # my $f = SeeAlso::Format->new( $_ )
+    # seealso => [ $f->app => $f->type ]
+    my $f = SeeAlso::Format->new('seealso');
+    #my $f = SeeAlso::Format::seealso->new;#('seealso');
 
-            # never return format list if format parameter given
-            _ => { always => 1 }, 
+    # never return format list if format parameter given
+    $formats{_} = { always => 1 };
+    $formats{opensearchdescription} = [
+        sub { $self->openSearchDescription(@_); } => 'application/opensearchdescription+xml',
+    ];
+    $formats{seealso} = [ $f->app( sub { $self->query(@_) } ), $f->type ];
 
-            %formats # additional formats
-        );
-    
+    my $app = unAPI( %formats );
     $app = Plack::Middleware::JSONP->wrap($app);
 
     if ($self->{Stylesheet}) {
@@ -118,7 +111,7 @@ sub call {
     Plack::Util::response_cb( $result, sub {
         my $res = shift;
         return unless $res->[0] == 300;
-        my $base = $self->base || Plack::Request->new($env)->base;
+        my $base = $self->{base} || Plack::Request->new($env)->base;
         my $xsl = $self->{Stylesheet};
         $xsl = '<?xml-stylesheet type="text/xsl" href="'.$xsl.'"?>';
         $xsl .= "\n<?seealso-query-base $base?>\n";
@@ -130,17 +123,16 @@ sub call {
 
 sub openSearchDescription {
     my ($self, $env) = @_;
-    my $base = Plack::Request->new($env)->base; 
+    my $base = Plack::Request->new($env)->base;
 
-    my @xml = '<?xml version="1.0" encoding="UTF-8"?>    
-<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/" 
-    xmlns:dc="http://purl.org/dc/elements/1.1/" 
-    xmlns:dcterms="http://purl.org/dc/terms/" 
+    my @xml = '<?xml version="1.0" encoding="UTF-8"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/"
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:dcterms="http://purl.org/dc/terms/"
     xmlns:seealso="http://ws.gbv.de/seealso/schema/">';
 
     my @prop = (
-        map { $_ => $_ } qw(ShortName LongName Description Tags 
-            Contact Developer Attribution),
+        map { $_ => $_ } qw(ShortName LongName Description Tags Contact Developer Attribution),
         DateModified => 'dcterms:modified',
         Source       => 'dc:source',
     );
@@ -151,17 +143,17 @@ sub openSearchDescription {
         push @xml, "  <$tag>"._xmlescape($value)."</$tag>";
     }
 
-    foreach (@{ $self->Examples || [] }) {
+    foreach (@{ $self->{Examples} || [] }) {
         my $id = _xmlescape($_->{id});
         push @xml, "<Query role=\"example\" searchTerms=\"$id\" />";
     }
-    
+
     my $tpl = $base . ($base =~ /\?/ ? '&' : '?')
             . "id={searchTerms}&format=seealso&callback={callback}";
     push @xml, "  <Url type=\"text/javascript\" template=\"" . _xmlescape($tpl) . "\"/>";
 
     push @xml, '</OpenSearchDescription>','';
- 
+
     return [ 200, [ "Content-Type"
             => 'application/opensearchdescription+xml; charset: utf-8' ],
         [ encode('utf8', join "\n", @xml) ]
@@ -177,16 +169,7 @@ sub push_seealso ($$$$) {
 }
 
 sub valid_seealso ($) {
-    my $resp = shift;
-    return unless (reftype($resp) || '') eq 'ARRAY' and @$resp == 4;
-    return if ref($resp->[0] // []); # identifier must be string
-    return unless (reftype($resp) || '') eq 'ARRAY';
-    foreach (1,2,3) {
-        my $a = $resp->[$_];
-        return unless (reftype($a) || '') eq 'ARRAY';
-        return if grep { ref($_ // []) } @$a; 
-    }
-    $resp;
+    return SeeAlso::Format::valid(@_);
 }
 
 # Replace &, <, >, " by XML entities.
@@ -203,9 +186,11 @@ sub _xmlescape {
 
 1;
 
-
 __END__
+
 =pod
+
+=encoding UTF-8
 
 =head1 NAME
 
@@ -213,25 +198,25 @@ Plack::App::SeeAlso - SeeAlso Server as PSGI application
 
 =head1 VERSION
 
-version 0.12
+version 0.14
 
 =head1 SYNOPSIS
 
     # create SeeAlso server with code reference
     use Plack::App::SeeAlso;
-    my $app = Plack::App::SeeAlso->new( 
+    my $app = Plack::App::SeeAlso->new(
         Query => sub {
             my $id = shift;
             return unless $id =~ /:/; # return undef for empty response
-            
-            # ... create and return response            
-            return [ $id, [ "label" ], 
-                          [ "hello" ], 
+
+            # ... create and return response
+            return [ $id, [ "label" ],
+                          [ "hello" ],
                           [ "http://example.org" ] ];
 
             # ... alternatively create with 'push_seealso'
             push_seealso [$id], "label", "hello", "http://example.org";
-        }, ShortName => 'My Server' 
+        }, ShortName => 'My Server'
     );
 
     # create SeeAlso server as subclass
@@ -247,6 +232,25 @@ version 0.12
         return $response;
     }
 
+To implement a SeeAlso server with this module, just provide a query function:
+
+    $ echo 'use Plack::App::SeeAlso;
+    Plack::App::SeeAlso->new( Query => sub {
+        my $id = shift;
+        return unless $id =~ /:/;
+        # ...
+        return [ $id, [ "label" ], [ "hello" ], [ "http://example.org" ] ];
+    } );' > app.psgi
+
+    $ plackup app.psgi &
+    HTTP::Server::PSGI: Accepting connections at http://0:5000/
+
+    $ curl 'http://0:5000/?format=seealso&id=foo:bar'
+    ["foo:bar",["label"],["hello"],["http://example.org"]]
+
+    $ curl 'http://0:5000/?format=seealso&id=foo&callback=bar'
+    bar(["foo",[],[],[]])
+
 =head1 DESCRIPTION
 
 This module implements a I<SeeAlso Linkserver Protocol> server as PSGI
@@ -258,13 +262,13 @@ Description Documents> for the service description).
 You can simply implement a SeeAlso server by creating an instance of
 Plack::App::SeeAlso or by deriving from this class and implementing the
 C<query> method. Errors in the query method (including invalid SeeAlso
-responses) are catched and printed to the error stream, so on failure an 
+responses) are catched and printed to the error stream, so on failure an
 empty SeeAlso response is returned.
 
 This module contains a SeeAlso client in form of three files (C<seealso.js>,
 C<seealso.xsl>, and C<seealso.css>). The client is served if no
 format-parameter was given, so you automatically get a nice, human readable
-interface for your SeeAlso server.
+interface for your SeeAlso server, for instance for debugging.
 
 =head1 METHODS
 
@@ -310,7 +314,7 @@ to 256 characters).
 
 =item B<Attribution>
 
-A list of all sources or entities that should be credited for the content 
+A list of all sources or entities that should be credited for the content
 contained in the search feed (truncated to 256 characters).
 
 =item B<Source>
@@ -327,9 +331,9 @@ I<Date.Modified>).
 A list of hash reference with C<id> examples and optional C<response> data,
 such as the following structure:
 
-    [ 
-      { id => 'foo' }, 
-      { id => 'bar', 
+    [
+      { id => 'foo' },
+      { id => 'bar',
         response => [ 'bar', ['label'],['description'],['uri'] ] }
     ]
 
@@ -337,7 +341,7 @@ such as the following structure:
 
 By default, an client interface is returned at C</seealso.xsl>, C</seealso.js>,
 and C</seealso.css>. A link to the interface is added if no format parameter
-was given. You can disable this interface by setting the Stylesheet option to 
+was given. You can disable this interface by setting the Stylesheet option to
 undef or you set it to some URL of another XSLT file.
 
 =item B<Formats>
@@ -347,7 +351,7 @@ A hash reference with additional formats, to be used with L<Plack::App::unAPI>.
 =item C<base>
 
 A base URL to be send in the C<seealso-query-base> processing-instruction. Set to
-the HTTP query base by default. One may need to adjust this if the server runs 
+the HTTP query base by default. One may need to adjust this if the server runs
 behind a proxy.
 
 =back
@@ -416,14 +420,13 @@ about unAPI can be found at L<http://www.ariadne.ac.uk/issue57/voss/>.
 
 =head1 AUTHOR
 
-Jakob Voss
+Jakob Voß
 
 =head1 COPYRIGHT AND LICENSE
 
-This software is copyright (c) 2013 by Jakob Voss.
+This software is copyright (c) 2014 by Jakob Voß.
 
 This is free software; you can redistribute it and/or modify it under
 the same terms as the Perl 5 programming language system itself.
 
 =cut
-

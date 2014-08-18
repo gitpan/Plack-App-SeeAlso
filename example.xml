@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet type="text/xsl" href="seealso.xsl"?>
-<?seealso-query-base http://0:5000/?>
-<formats>
-<format name="opensearchdescription" type="application/opensearchdescription+xml" />
-<format name="seealso" type="text/javascript" />
-</formats>

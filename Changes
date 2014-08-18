@@ -1,6 +1,5 @@
-# Change file for Plack::App::SeeAlso
-
-0.12      2013-03-22
+0.14      2014-08-18
+    Don't rely on accessor methods
 
 0.11      2012-04-18
     Fixed some typos and better error handling
